@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-cyber"
+version = "0.1.0"
+description = "Agent Cyber — a terminal-native AI security assistant with skills, file analysis, and report generation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Agent Cyber" }]
+keywords = ["security", "terminal", "ai", "pentest", "report"]
+dependencies = [
+    "textual>=0.80,<9",
+    "httpx>=0.27,<1",
+    "PyYAML>=6.0,<7",
+    "pypdf>=5.0,<7",
+    "tomli-w>=1.0,<2",
+    "arabic-reshaper>=3.0,<4",
+    "python-bidi>=0.4,<1",
+]
+
+[project.optional-dependencies]
+secure = ["keyring>=25.0,<26"]
+dev = ["pytest>=8.0,<10", "pytest-cov>=5.0,<8"]
+
+[project.scripts]
+agent-cyber = "agent_cyber.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_cyber = ["system_prompt.md", "skills/builtin/*/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
