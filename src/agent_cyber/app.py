@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
@@ -63,23 +64,17 @@ def contains_arabic(text: str) -> bool:
 
 
 def prepare_bidi_text(text: str) -> str:
-    """Shape Arabic runs for terminals that need explicit bidi output."""
-    if not text or arabic_reshaper is None or get_display is None:
+    """Add Unicode bidi controls without reshaping logical terminal text twice."""
+    if not text:
         return text
 
     output: list[str] = []
-    start: int | None = None
-    for index, char in enumerate(text + "\n"):
-        if _ARABIC_RE.match(char) or char in {" ", "\u0640", "\u200f", "\u200e"} and start is not None:
-            if start is None:
-                start = index
+    for line in text.split("\n"):
+        if contains_arabic(line):
+            output.append("\u202b" + line + "\u202c")
         else:
-            if start is not None:
-                output.append("\u202b" + get_display(arabic_reshaper.reshape(text[start:index])) + "\u202c")
-                start = None
-            if index < len(text):
-                output.append(char)
-    return "".join(output)
+            output.append(line)
+    return "\n".join(output)
 
 
 class ModelPickerScreen(ModalScreen[str]):
@@ -96,10 +91,10 @@ class ModelPickerScreen(ModalScreen[str]):
         background: rgba(0, 0, 0, 0.72);
     }
     ModelPickerScreen #model-card {
-        width: 80;
+        width: 72;
         max-width: 94%;
-        height: 15;
-        max-height: 80%;
+        height: 22;
+        max-height: 70%;
         border: tall #00e5a0;
         background: #0d1720;
         padding: 1 2;
@@ -139,7 +134,7 @@ class ModelPickerScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         card = Vertical(id="model-card")
-        card.styles.height = 14 + min(max(len(self.models), 1), 10)
+        card.styles.height = 22
         with card:
             yield Static(f"Select model · {len(self.models)} available", id="model-title")
             yield Input(
@@ -230,9 +225,9 @@ class ProviderListScreen(ModalScreen[str]):
         background: rgba(0, 0, 0, 0.72);
     }
     ProviderListScreen #provider-card {
-        width: 72;
+        width: 68;
         max-width: 94%;
-        height: 15;
+        height: 22;
         max-height: 80%;
         border: tall #00e5a0;
         background: #0d1720;
@@ -265,7 +260,7 @@ class ProviderListScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         card = Vertical(id="provider-card")
-        card.styles.height = 13 + min(max(len(self.providers), 1), 11)
+        card.styles.height = 22
         with card:
             yield Static(self._title, classes="provider-title")
             yield Input(placeholder="Search AI provider…", id="provider-search")
@@ -343,7 +338,7 @@ class ProviderKeyScreen(ModalScreen[str]):
 
     CSS = """
     ProviderKeyScreen { align: center middle; background: rgba(0, 0, 0, 0.72); }
-    ProviderKeyScreen #key-card { width: 62; height: 13; border: tall #00e5a0; background: #0d1720; padding: 1 2; }
+    ProviderKeyScreen #key-card { width: 58; max-width: 94%; height: 13; max-height: 70%; border: tall #00e5a0; background: #0d1720; padding: 1 2; }
     ProviderKeyScreen #provider-key { margin-top: 1; height: 3; border: tall #334155; background: #0f1720; }
     ProviderKeyScreen #provider-key:focus { border: tall #00e5a0; }
     ProviderKeyScreen #provider-key-help { height: 1; margin-top: 1; color: #7f8c98; }
@@ -374,6 +369,97 @@ class ProviderKeyScreen(ModalScreen[str]):
         self.dismiss(event.value.strip())
 
 
+class AgentSetupScreen(ModalScreen[dict[str, str] | None]):
+    CSS = """
+    AgentSetupScreen { align: center middle; background: rgba(0,0,0,0.75); }
+    #agent-setup-card { width: 78; max-width: 94%; height: 28; border: tall #00e5a0; background: #0d1720; padding: 1 2; }
+    #agent-setup-card Input { height: 3; border: tall #334155; background: #0f1720; margin-bottom: 1; }
+    #agent-setup-card Input:focus { border: tall #00e5a0; }
+    """
+
+    def __init__(self, suggested_name: str = ""):
+        super().__init__()
+        self.suggested_name = suggested_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="agent-setup-card"):
+            yield Static("Set up your Cyber Agent", classes="provider-title")
+            yield Static("Choose a unique name and define safe, authorized usage.", id="agent-setup-intro")
+            yield Input(value=self.suggested_name, placeholder="Agent name (for example: Hydra)", id="agent-name")
+            yield Input(placeholder="Main mission (for example: authorized penetration testing)", id="agent-mission")
+            yield Input(placeholder="Targets / systems you are allowed to test", id="agent-scope")
+            yield Input(placeholder="Important rules or boundaries", id="agent-rules")
+            with Horizontal(classes="card-actions"):
+                yield Button("Create agent", id="agent-create", compact=True, variant="success")
+                yield Button("Cancel", id="agent-cancel", compact=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#agent-name", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "agent-cancel":
+            self.dismiss(None)
+            return
+        values = {
+            "name": self.query_one("#agent-name", Input).value.strip(),
+            "mission": self.query_one("#agent-mission", Input).value.strip(),
+            "scope": self.query_one("#agent-scope", Input).value.strip(),
+            "rules": self.query_one("#agent-rules", Input).value.strip(),
+        }
+        if values["name"]:
+            self.dismiss(values)
+
+
+class SettingsScreen(ModalScreen[str]):
+    THEMES = {
+        "cyan": "Cyber Cyan",
+        "red-blue": "Red + Blue",
+        "amber-green": "Amber + Green",
+        "purple-blue": "Purple + Blue",
+        "mono": "Monochrome",
+    }
+
+    CSS = """
+    SettingsScreen { align: center middle; background: rgba(0,0,0,0.75); }
+    #settings-card { width: 62; max-width: 94%; height: 20; border: tall #00e5a0; background: #0d1720; padding: 1 2; }
+    #theme-list { height: 1fr; border: solid #334155; }
+    """
+
+    def __init__(self, current: str):
+        super().__init__()
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        options = [Option(label, id=theme_id) for theme_id, label in self.THEMES.items()]
+        with Vertical(id="settings-card"):
+            yield Static("Settings · Color mode", classes="provider-title")
+            yield OptionList(*options, id="theme-list")
+            with Horizontal(classes="card-actions"):
+                yield Button("Apply", id="theme-apply", compact=True, variant="success")
+                yield Button("Cancel", id="theme-cancel", compact=True)
+
+    def on_mount(self) -> None:
+        picker = self.query_one("#theme-list", OptionList)
+        for index, theme_id in enumerate(self.THEMES):
+            if theme_id == self.current:
+                picker.highlighted = index
+                break
+        picker.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "theme-list":
+            self.dismiss(event.option.id)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "theme-cancel":
+            self.dismiss(None)
+            return
+        picker = self.query_one("#theme-list", OptionList)
+        if picker.highlighted is not None:
+            theme_id = list(self.THEMES)[picker.highlighted]
+            self.dismiss(theme_id)
+
+
 COMMANDS: tuple[tuple[str, str], ...] = (
     ("/help", "Show help"),
     ("/attach", "Attach a file"),
@@ -391,6 +477,9 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("/clear", "Clear messages"),
     ("/config", "Show configuration"),
     ("/stop", "Stop generation"),
+    ("/agents", "Create, list, or switch Cyber agents"),
+    ("/agent", "Create or switch a named Cyber agent"),
+    ("/settings", "Choose the application color mode"),
     ("/quit", "Exit Agent Cyber"),
 )
 
@@ -414,6 +503,9 @@ HELP = """\
 | `/resume <id>` | Resume a saved session |
 | `/config` | Show configuration and key status |
 | `/key [provider [key]]` | Add or remove a provider API key |
+| `/agents` | List or switch named Cyber agents |
+| `/agent <name>` | Create, configure, or switch an agent |
+| `/settings` | Choose a color mode |
 | `/clear` | Clear the current session's messages |
 | `/stop` | Stop the current generation |
 | `/quit` | Exit |
@@ -540,6 +632,15 @@ class AgentCyberApp(App[None]):
     SUB_TITLE = "Cyber AI // terminal"
 
     CSS = """
+    AgentCyberApp.theme-red-blue Screen { background: #100b0f; }
+    AgentCyberApp.theme-red-blue #composer:focus { border: tall #4da3ff; }
+    AgentCyberApp.theme-red-blue ChatMessage.assistant { border-left: thick #ff5f56; }
+    AgentCyberApp.theme-amber-green Screen { background: #10130c; }
+    AgentCyberApp.theme-amber-green ChatMessage.assistant { border-left: thick #fbbf24; }
+    AgentCyberApp.theme-purple-blue Screen { background: #100d18; }
+    AgentCyberApp.theme-purple-blue ChatMessage.assistant { border-left: thick #a78bfa; }
+    AgentCyberApp.theme-mono Screen { background: #111111; }
+    AgentCyberApp.theme-mono ChatMessage.assistant { border-left: thick #d0d0d0; }
     Screen {
         background: #0b0f14;
         color: #d7e2ea;
@@ -686,6 +787,22 @@ class AgentCyberApp(App[None]):
         self._models_cache: list[ModelInfo] | None = None
         self._hidden_models: set[str] = set()
         self._disabled_providers: set[str] = set()
+        self.agents_file = (self.config.data_path or data_dir()) / "agents.json"
+        self.preferences_file = (self.config.data_path or data_dir()) / "preferences.json"
+        self.cyber_agents = self._load_json_object(self.agents_file)
+        self.active_agent = str(self._load_json_object(self.preferences_file).get("active_agent", "Cyber Agent") or "Cyber Agent")
+        self.theme_name = str(self._load_json_object(self.preferences_file).get("theme", "cyan") or "cyan")
+
+    def _load_json_object(self, path: Path) -> dict[str, object]:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _save_json_object(self, path: Path, value: dict[str, object]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------ compose
     def compose(self) -> ComposeResult:
@@ -732,8 +849,78 @@ class AgentCyberApp(App[None]):
                 + "; ".join(escape(item) for item in self.skill_errors)
             )
 
+        self._apply_theme(self.theme_name)
         self._update_sidebar()
         self.query_one(Composer).focus()
+        if not self.cyber_agents and not os.getenv("PYTEST_CURRENT_TEST"):
+            self.call_after_refresh(self.push_screen, AgentSetupScreen(), self._finish_agent_setup)
+
+    # ------------------------------------------------------------------ agents and settings
+    def _finish_agent_setup(self, profile: dict[str, str] | None) -> None:
+        if not profile:
+            return
+        name = profile["name"].strip()
+        if not name:
+            return
+        key = name.lower()
+        self.cyber_agents[key] = profile
+        self._save_json_object(self.agents_file, self.cyber_agents)
+        asyncio.create_task(self._activate_agent(name))
+
+    async def _activate_agent(self, name: str) -> None:
+        key = name.strip().lower()
+        profile = self.cyber_agents.get(key)
+        if not isinstance(profile, dict):
+            await self._system(f"Agent `{escape(name)}` was not found. Use `/agents` to create one.")
+            return
+        self.active_agent = str(profile.get("name", name))
+        preferences = self._load_json_object(self.preferences_file)
+        preferences["active_agent"] = self.active_agent
+        self._save_json_object(self.preferences_file, preferences)
+        mission = str(profile.get("mission") or "cyber security operations")
+        scope = str(profile.get("scope") or "only explicitly authorized systems")
+        rules = str(profile.get("rules") or "follow applicable laws and stop on ambiguity")
+        await self._system(
+            f"Agent **{escape(self.active_agent)}** is active.\n\n"
+            f"**Mission:** {escape(mission)}\n"
+            f"**Authorized scope:** {escape(scope)}\n"
+            f"**Rules:** {escape(rules)}"
+        )
+        self._update_sidebar()
+
+    def _apply_theme(self, theme: str) -> None:
+        for theme_id in SettingsScreen.THEMES:
+            self.remove_class(f"theme-{theme_id}")
+        theme = theme if theme in SettingsScreen.THEMES else "cyan"
+        self.theme_name = theme
+        self.add_class(f"theme-{theme}")
+
+    async def _open_settings(self) -> None:
+        self.push_screen(SettingsScreen(self.theme_name), self._finish_theme_change)
+
+    def _finish_theme_change(self, theme: str | None) -> None:
+        if not theme:
+            return
+        self._apply_theme(theme)
+        preferences = self._load_json_object(self.preferences_file)
+        preferences["theme"] = theme
+        self._save_json_object(self.preferences_file, preferences)
+        asyncio.create_task(self._system(f"Color mode changed to **{escape(SettingsScreen.THEMES.get(theme, theme))}**."))
+
+    async def _activate_or_create_agent(self, name: str) -> None:
+        if name.lower() in self.cyber_agents:
+            await self._activate_agent(name)
+            return
+        self.push_screen(AgentSetupScreen(name), self._finish_agent_setup)
+
+    async def _list_agents(self) -> None:
+        if not self.cyber_agents:
+            self.push_screen(AgentSetupScreen(), self._finish_agent_setup)
+            return
+        names = [str(profile.get("name", key)) for key, profile in self.cyber_agents.items() if isinstance(profile, dict)]
+        lines = ["## Cyber agents"] + [f"- **{escape(name)}**" + (" ← active" if name == self.active_agent else "") for name in names]
+        lines.append("\nCreate one with `/agent <name>` or switch with `/agents`.")
+        await self._system("\n".join(lines))
 
     # ------------------------------------------------------------------ state
     @property
@@ -795,6 +982,7 @@ class AgentCyberApp(App[None]):
         title = self.session.title if self.session else "—"
 
         lines = [
+            f"[b]agent[/]    {escape(self.active_agent)}",
             f"[b]status[/]   {status}",
             f"[b]model[/]    {escape(model)}",
             f"[b]session[/]  {escape(session_id)}",
@@ -954,6 +1142,16 @@ class AgentCyberApp(App[None]):
                 force_skill=force_skill,
                 extra_user=extra_user,
             )
+            profile = self.cyber_agents.get(self.active_agent.lower())
+            if isinstance(profile, dict):
+                messages[0]["content"] += (
+                    "\n\n## Active named Cyber Agent\n"
+                    f"Name: {profile.get('name', self.active_agent)}\n"
+                    f"Mission: {profile.get('mission', '')}\n"
+                    f"Authorized scope: {profile.get('scope', '')}\n"
+                    f"Safety boundaries: {profile.get('rules', '')}\n"
+                    "Only operate within this authorization. Ask before testing anything outside it."
+                )
             async for chunk in self.agent.stream(messages, model=self.model):
                 buffer += chunk
                 now = time.monotonic()
@@ -1037,6 +1235,15 @@ class AgentCyberApp(App[None]):
             await self._show_config()
         elif command == "/key":
             await self._set_key(argument)
+        elif command == "/agents":
+            await self._list_agents()
+        elif command == "/agent":
+            if argument:
+                await self._activate_or_create_agent(argument)
+            else:
+                await self._list_agents()
+        elif command == "/settings":
+            await self._open_settings()
         elif command == "/clear":
             await self._clear()
         elif command == "/stop":

@@ -150,7 +150,7 @@ def test_command_suggestions_show_every_command_and_filter_by_first_letter():
         "/": [name for name, _ in COMMANDS],
         "/k": ["/key"],
         "/m": ["/models", "/model"],
-        "/s": ["/skills", "/skill", "/sessions", "/stop"],
+        "/s": ["/skills", "/skill", "/sessions", "/stop", "/settings"],
         "/r": ["/resume", "/report"],
         "/c": ["/clear", "/config"],
         "/q": ["/quit"],

@@ -89,6 +89,10 @@ class ChatAgent:
         *,
         model: str | None = None,
     ) -> AsyncIterator[str]:
+        greeting = _greeting_response(messages)
+        if greeting is not None:
+            yield greeting
+            return
         async for chunk in self.provider.stream(messages, model=model):
             yield chunk
 
@@ -138,6 +142,27 @@ def _select_history(
 
     selected_rev.reverse()
     return selected_rev
+
+
+def _greeting_response(messages: list[dict[str, str]]) -> str | None:
+    """Handle common greetings deterministically so provider language defaults cannot override them."""
+    latest = next((item["content"] for item in reversed(messages) if item.get("role") == "user"), "")
+    greeting = " ".join(latest.strip().lower().split())
+    greetings = {
+        "hello": "Hello! How can I help you?",
+        "hello!": "Hello! How can I help you?",
+        "hi": "Hello! How can I help you?",
+        "hi!": "Hello! How can I help you?",
+        "hey": "Hello! How can I help you?",
+        "hey!": "Hello! How can I help you?",
+        "سلام عليكم": "وعليكم السلام! كيف يمكنني مساعدتك؟",
+        "السلام عليكم": "وعليكم السلام! كيف يمكنني مساعدتك؟",
+        "bonjour": "Bonjour ! Comment puis-je vous aider ?",
+        "bonsoir": "Bonsoir ! Comment puis-je vous aider ?",
+        "hola": "¡Hola! ¿Cómo puedo ayudarte?",
+        "hola!": "¡Hola! ¿Cómo puedo ayudarte?",
+    }
+    return greetings.get(greeting)
 
 
 def _load_system_prompt() -> str:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_cyber.agent import ChatAgent, _select_history
+from agent_cyber.agent import ChatAgent, _greeting_response, _select_history
 from agent_cyber.config import load_config
 from agent_cyber.models import AttachmentRef, Message
 from agent_cyber.skills import SkillLoader
@@ -9,6 +9,12 @@ from agent_cyber.skills import SkillLoader
 def _config(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_CYBER_HOME", str(tmp_path / "home"))
     return load_config()
+
+
+def test_greetings_match_the_users_language():
+    assert _greeting_response([{"role": "user", "content": "hi"}]) == "Hello! How can I help you?"
+    assert "وعليكم السلام" in (_greeting_response([{"role": "user", "content": "السلام عليكم"}]) or "")
+    assert _greeting_response([{"role": "user", "content": "bonjour"}]).startswith("Bonjour")
 
 
 def test_system_prompt_contains_skill(tmp_path, monkeypatch):
