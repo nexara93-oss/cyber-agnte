@@ -53,7 +53,6 @@ Requires Python 3.11+.
 ### Windows (PowerShell)
 
 ```powershell
-cd C:\Users\Administrator\Documents\agnte-ai
 python -m pip install -e .
 ```
 
@@ -66,7 +65,6 @@ python -m agent_cyber
 ### Linux / macOS
 
 ```bash
-cd agnte-ai
 python3 -m pip install -e .
 agent-cyber
 ```
