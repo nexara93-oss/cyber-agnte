@@ -20,7 +20,7 @@ skills, persistent sessions, and one-command report generation.
 └───────────────────────────────────────────────────────────┘
 ```
 
-![Agent Cyber terminal UI](cyber-agnte\docsagent-cyber.svg)
+![Agent Cyber terminal UI](cyber-agnte\docs\agent-cyber.svg)
 
 > **Authorized use only.** Use Agent Cyber only on systems you own or have
 > written permission to assess. The assistant refuses requests to attack third
