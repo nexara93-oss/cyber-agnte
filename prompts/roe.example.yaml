@@ -1,0 +1,120 @@
+# ============================================================
+# JANUS — Rules of Engagement (RoE) example
+# Copy to config/roe.yaml and replace every placeholder.
+# A signed RoE is mandatory before any active testing.
+# ============================================================
+
+engagement_id: ENG-2026-001
+name: "Internal Web Application Assessment"
+client:
+  name: "Example Corp"
+  owner: "Security Team"
+  technical_contact: "soc@example.com"
+  emergency_contact: "+000-000-000"
+authorization:
+  reference: "SOW-2026-0142 / signed 2026-11-01"
+  signed_by: "Jane Doe, CISO"
+  signed_at: "2026-11-01T10:00:00Z"
+  valid_from: "2026-11-05T08:00:00Z"
+  valid_to: "2026-11-12T18:00:00Z"
+  document_hash: "sha256:REPLACE_WITH_HASH_OF_SIGNED_PDF"
+
+scope:
+  domains:
+    - "lab.example.com"
+    - "app.lab.example.com"
+  cidrs:
+    - "10.10.10.0/24"
+    - "2001:db8:10::/64"
+  urls:
+    - "https://app.lab.example.com"
+  cloud_accounts: []
+  repositories: []
+  accounts:
+    - "test-user@lab.example.com"   # dedicated test account only
+
+exclusions:
+  - "10.10.10.5"                    # production database
+  - "*.payments.example.com"        # third-party payment provider
+  - "https://app.lab.example.com/admin/maintenance"
+  - "Any social engineering or phishing"
+  - "Any physical access attempt"
+
+rules:
+  testing_window:
+    timezone: "Africa/Casablanca"
+    weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    hours: "09:00-18:00"
+  max_requests_per_second: 5
+  max_concurrent_connections: 10
+  allowed_risk_classes:
+    - PASSIVE
+    - SAFE_ACTIVE
+    - INTRUSIVE_WITH_APPROVAL
+  prohibited:
+    - denial_of_service
+    - resource_exhaustion
+    - malware
+    - persistence
+    - credential_dumping
+    - data_exfiltration
+    - destructive_changes
+    - anti_forensics
+    - social_engineering
+    - physical_access
+    - third_party_targets
+    - zero_day_exploitation
+  data_handling:
+    store_minimum_evidence: true
+    redact_secrets: true
+    encrypt_at_rest: true
+    retention_days: 90
+    allow_pii_access: false
+  defender_coordination: true     # client SOC knows the test window
+  stealth_authorized: false       # no evasion of logging or detection
+  production_changes_allowed: false
+
+approvals:
+  required_for:
+    - exploitation
+    - privilege_escalation
+    - lateral_movement
+    - credential_use
+    - data_access
+    - tool_installation_on_target
+    - scope_deviation
+    - time_extension
+  approver:
+    name: "Security Team Lead"
+    channel: "TUI approval prompt"
+  token_ttl_minutes: 30
+  single_use: true
+  allow_self_approval: false
+
+reporting:
+  language: "ar"                   # ar | fr | en
+  formats: ["md", "pdf", "json"]
+  include_executive_summary: true
+  include_attack_narrative: true
+  include_coverage_matrix: true
+  include_four_gate_attestation: true
+  redact_evidence: true
+
+memory:
+  enabled: true
+  scope: "engagement"              # no cross-engagement leakage
+  store_lessons_learned: true
+  encrypt_at_rest: true
+  ttl_days: 90
+  allow_export: true
+  allow_delete: true
+
+safety:
+  safe_mode_default: true
+  kill_switch: "/stop"
+  stop_on_production_impact: true
+  stop_on_out_of_scope: true
+  stop_on_pii: true
+  stop_on_prompt_injection: true
+  require_policy_engine_health: true
+  sandbox_required_for_intrusive: true
