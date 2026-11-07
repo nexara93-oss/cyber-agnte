@@ -233,6 +233,9 @@ From the repository, you can also use the launchers:
 | `/resume <id>` | Resume a session |
 | `/config` | Show configuration and key status |
 | `/key [provider [key]]` | Add or remove a provider API key |
+| `/agents` | List Cyber agents or start setup in chat |
+| `/agent <name>` | Switch to an agent, or answer its setup questions in chat |
+| `/agent name \| mission \| scope \| rules` | Create or update an agent directly |
 | `/clear` | Clear the current session |
 | `/stop` | Stop generation |
 | `/quit` | Exit |
@@ -247,6 +250,11 @@ button removes the highlighted provider: its API key is deleted from the OS
 keychain/environment, its cached model list is cleared, and if it was the
 active provider the configuration is reset. It disappears from `/models`
 immediately.
+
+On first launch, setup happens in the chat instead of a modal card: type `hi`
+and answer the name, mission, authorized scope, and rules questions. You can
+also create or update an agent directly with
+`/agent name | mission | scope | rules`.
 
 CLI commands: `agent-cyber init`, `agent-cyber setup`, `agent-cyber config`,
 `agent-cyber test`, `agent-cyber skills`.
@@ -428,7 +436,7 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-40 tests cover config, attachments, skills, database, context assembly, provider
+44 tests cover config, attachments, skills, database, context assembly, chat onboarding, provider
 parsing, and the Textual UI.
 
 ---

@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from rich.cells import cell_len
 from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
@@ -58,6 +59,32 @@ except ImportError:  # The app still works when bidi support is not installed.
 
 _ARABIC_RE = re.compile(r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]")
 
+DEFAULT_AGENT_PROFILE: dict[str, str] = {
+    "name": "Cyber Agent",
+    "mission": "authorized cyber security operations",
+    "scope": "only systems the operator owns or has written permission to test",
+    "rules": "follow applicable laws, stay inside the authorized scope, and ask before destructive actions",
+}
+
+ONBOARDING_QUESTIONS: dict[str, tuple[str, str]] = {
+    "name": (
+        "1/4 · Name",
+        "What should I call this agent?",
+    ),
+    "mission": (
+        "2/4 · Mission",
+        "What is this agent here to do?",
+    ),
+    "scope": (
+        "3/4 · Authorized scope",
+        "Which systems, networks, or files may it work on? Only include systems you own or have written permission to test.",
+    ),
+    "rules": (
+        "4/4 · Rules",
+        "What boundaries must it always respect? For example: ask before anything destructive.",
+    ),
+}
+
 
 def contains_arabic(text: str) -> bool:
     return bool(_ARABIC_RE.search(text or ""))
@@ -94,7 +121,7 @@ class ModelPickerScreen(ModalScreen[str]):
         width: 72;
         max-width: 94%;
         height: 22;
-        max-height: 70%;
+        max-height: 80%;
         border: tall #00e5a0;
         background: #0d1720;
         padding: 1 2;
@@ -369,47 +396,6 @@ class ProviderKeyScreen(ModalScreen[str]):
         self.dismiss(event.value.strip())
 
 
-class AgentSetupScreen(ModalScreen[dict[str, str] | None]):
-    CSS = """
-    AgentSetupScreen { align: center middle; background: rgba(0,0,0,0.75); }
-    #agent-setup-card { width: 78; max-width: 94%; height: 28; border: tall #00e5a0; background: #0d1720; padding: 1 2; }
-    #agent-setup-card Input { height: 3; border: tall #334155; background: #0f1720; margin-bottom: 1; }
-    #agent-setup-card Input:focus { border: tall #00e5a0; }
-    """
-
-    def __init__(self, suggested_name: str = ""):
-        super().__init__()
-        self.suggested_name = suggested_name
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="agent-setup-card"):
-            yield Static("Set up your Cyber Agent", classes="provider-title")
-            yield Static("Choose a unique name and define safe, authorized usage.", id="agent-setup-intro")
-            yield Input(value=self.suggested_name, placeholder="Agent name (for example: Hydra)", id="agent-name")
-            yield Input(placeholder="Main mission (for example: authorized penetration testing)", id="agent-mission")
-            yield Input(placeholder="Targets / systems you are allowed to test", id="agent-scope")
-            yield Input(placeholder="Important rules or boundaries", id="agent-rules")
-            with Horizontal(classes="card-actions"):
-                yield Button("Create agent", id="agent-create", compact=True, variant="success")
-                yield Button("Cancel", id="agent-cancel", compact=True)
-
-    def on_mount(self) -> None:
-        self.query_one("#agent-name", Input).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "agent-cancel":
-            self.dismiss(None)
-            return
-        values = {
-            "name": self.query_one("#agent-name", Input).value.strip(),
-            "mission": self.query_one("#agent-mission", Input).value.strip(),
-            "scope": self.query_one("#agent-scope", Input).value.strip(),
-            "rules": self.query_one("#agent-rules", Input).value.strip(),
-        }
-        if values["name"]:
-            self.dismiss(values)
-
-
 class SettingsScreen(ModalScreen[str]):
     THEMES = {
         "cyan": "Cyber Cyan",
@@ -477,8 +463,8 @@ COMMANDS: tuple[tuple[str, str], ...] = (
     ("/clear", "Clear messages"),
     ("/config", "Show configuration"),
     ("/stop", "Stop generation"),
-    ("/agents", "Create, list, or switch Cyber agents"),
-    ("/agent", "Create or switch a named Cyber agent"),
+    ("/agents", "List Cyber agents or start chat setup"),
+    ("/agent", "Switch, create, or update an agent in chat"),
     ("/settings", "Choose the application color mode"),
     ("/quit", "Exit Agent Cyber"),
 )
@@ -503,8 +489,9 @@ HELP = """\
 | `/resume <id>` | Resume a saved session |
 | `/config` | Show configuration and key status |
 | `/key [provider [key]]` | Add or remove a provider API key |
-| `/agents` | List or switch named Cyber agents |
-| `/agent <name>` | Create, configure, or switch an agent |
+| `/agents` | List Cyber agents or start setup in chat |
+| `/agent <name>` | Switch to an agent, or answer its setup questions in chat |
+| `/agent name \\| mission \\| scope \\| rules` | Create or update an agent directly |
 | `/settings` | Choose a color mode |
 | `/clear` | Clear the current session's messages |
 | `/stop` | Stop the current generation |
@@ -516,8 +503,8 @@ line; `Esc` stops generation. Attachments are sent only with your next message.
 """
 
 
-class ChatMessage(Vertical):
-    """A rendered user, assistant, or system message."""
+class ChatMessage(Horizontal):
+    """A refined chat row with a role-labelled bubble."""
 
     def __init__(
         self,
@@ -532,28 +519,33 @@ class ChatMessage(Vertical):
             classes += " streaming"
         super().__init__(classes=classes)
         if contains_arabic(content):
-            classes += " rtl"
             self.add_class("rtl")
         self.role = role
         self._content = content
         self._attachments = attachments or []
-        self._body = Markdown(prepare_bidi_text(content) or "", classes="body")
-        self._meta = Static(
-            escape(self._meta_text(streaming)), classes="meta"
+        self._attachment_text = (
+            "attached: "
+            + ", ".join(attachment_label(item) for item in self._attachments)
+            if self._attachments
+            else ""
         )
-        self._attachment_line = (
-            Static(
-                escape(
-                    "attached: "
-                    + ", ".join(attachment_label(item) for item in self._attachments)
-                ),
-                classes="attachments",
+        self._bubble = Vertical(classes=f"bubble {role}")
+        self._bubble.border_title = self._title(streaming)
+        if role == "user":
+            # Plain text keeps user input literal and lets the bubble fit its content.
+            self._body: Markdown | Static = Static(
+                prepare_bidi_text(content) or "", classes="body", markup=False
             )
+        else:
+            self._body = Markdown(prepare_bidi_text(content) or "", classes="body")
+        self._attachment_line = (
+            Static(self._attachment_text, classes="attachments", markup=False)
             if self._attachments
             else None
         )
+        self._fitted_width: int | None = None
 
-    def _meta_text(self, streaming: bool = False) -> str:
+    def _title(self, streaming: bool = False) -> str:
         if self.role == "user":
             return "YOU"
         if self.role == "assistant":
@@ -561,17 +553,51 @@ class ChatMessage(Vertical):
         return "SYSTEM"
 
     def compose(self) -> ComposeResult:
-        yield self._meta
-        yield self._body
-        if self._attachment_line is not None:
-            yield self._attachment_line
+        with self._bubble:
+            yield self._body
+            if self._attachment_line is not None:
+                yield self._attachment_line
+
+    def on_mount(self) -> None:
+        if self.role == "user":
+            self.call_after_refresh(self._fit_bubble)
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self.role == "user":
+            self.call_after_refresh(self._fit_bubble)
+
+    def _fit_bubble(self) -> None:
+        try:
+            chat = self.app.query_one("#chat", VerticalScroll)
+        except Exception:
+            return
+        available = chat.content_size.width
+        if available <= 0:
+            return
+        max_width = min(76, max(16, int(available * 0.8)))
+        measured = self._content
+        if self._attachment_text:
+            measured += "\n" + self._attachment_text
+        longest = max((cell_len(line) for line in measured.splitlines()), default=0)
+        width = max(8, min(longest + 6, max_width))
+        if width != self._fitted_width:
+            self._fitted_width = width
+            self._bubble.styles.width = width
 
     async def set_content(self, content: str, *, streaming: bool = False) -> None:
         self._content = content
-        await self._body.update(prepare_bidi_text(content) or "")
+        self._bubble.border_title = self._title(streaming)
+        if not self._body.is_mounted:
+            try:
+                await self._body._mounted_event.wait()
+            except Exception:
+                return
+        if isinstance(self._body, Markdown):
+            await self._body.update(prepare_bidi_text(content) or "")
+        else:
+            self._body.update(prepare_bidi_text(content) or "")
         if contains_arabic(content):
             self.add_class("rtl")
-        self._meta.update(escape(self._meta_text(streaming)))
 
 
 class Composer(TextArea):
@@ -634,13 +660,15 @@ class AgentCyberApp(App[None]):
     CSS = """
     AgentCyberApp.theme-red-blue Screen { background: #100b0f; }
     AgentCyberApp.theme-red-blue #composer:focus { border: tall #4da3ff; }
-    AgentCyberApp.theme-red-blue ChatMessage.assistant { border-left: thick #ff5f56; }
+    AgentCyberApp.theme-red-blue ChatMessage.assistant .bubble { border: round #4a2b32; border-title-color: #ff8a80; }
     AgentCyberApp.theme-amber-green Screen { background: #10130c; }
-    AgentCyberApp.theme-amber-green ChatMessage.assistant { border-left: thick #fbbf24; }
+    AgentCyberApp.theme-amber-green ChatMessage.assistant .bubble { border: round #4a3d1f; border-title-color: #fbbf24; }
+    AgentCyberApp.theme-amber-green ChatMessage.user .bubble { border: round #2d4a3a; border-title-color: #8fd6a8; }
     AgentCyberApp.theme-purple-blue Screen { background: #100d18; }
-    AgentCyberApp.theme-purple-blue ChatMessage.assistant { border-left: thick #a78bfa; }
+    AgentCyberApp.theme-purple-blue ChatMessage.assistant .bubble { border: round #3b2d55; border-title-color: #b9a3ff; }
     AgentCyberApp.theme-mono Screen { background: #111111; }
-    AgentCyberApp.theme-mono ChatMessage.assistant { border-left: thick #d0d0d0; }
+    AgentCyberApp.theme-mono ChatMessage.assistant .bubble { border: round #3a3a3a; border-title-color: #d0d0d0; }
+    AgentCyberApp.theme-mono ChatMessage.user .bubble { border: round #3a3a3a; border-title-color: #d0d0d0; }
     Screen {
         background: #0b0f14;
         color: #d7e2ea;
@@ -719,46 +747,55 @@ class AgentCyberApp(App[None]):
     }
     ChatMessage {
         height: auto;
+        width: 100%;
         margin: 0 0 1 0;
+    }
+    ChatMessage .bubble {
+        height: auto;
+        width: 82%;
+        max-width: 110;
         padding: 0 1;
+        border: round #1e3a38;
+        background: #0c1518;
+        border-title-color: #7fd6c0;
+        border-title-style: bold;
     }
     ChatMessage.user {
-        border-left: thick #3b82f6;
-        background: #0d1622;
+        align: right top;
     }
-    ChatMessage.assistant {
-        border-left: thick #00e5a0;
-        background: #0c1518;
+    ChatMessage.user .bubble {
+        width: auto;
+        max-width: 76;
+        border: round #2a465a;
+        background: #0f1a24;
+        border-title-align: right;
+        border-title-color: #8fb6cf;
     }
-    ChatMessage.system {
-        border-left: thick #334155;
-        background: #0b0f14;
-        color: #9fb0c0;
+    ChatMessage.system .bubble {
+        width: 100%;
+        max-width: 100%;
+        border: round #24303a;
+        background: #0a1116;
+        border-title-color: #7f8c98;
     }
-    ChatMessage .meta {
-        height: auto;
-        color: #7f8c98;
-        text-style: bold;
-    }
-    ChatMessage.user .meta {
-        color: #60a5fa;
-    }
-    ChatMessage.assistant .meta {
-        color: #00e5a0;
+    ChatMessage.streaming .bubble {
+        border: round #2d5f55;
     }
     ChatMessage .body {
+        width: 100%;
         height: auto;
         background: transparent;
         margin: 0;
         padding: 0;
+        text-wrap: wrap;
     }
     ChatMessage.rtl .body {
         text-align: right;
     }
     ChatMessage .attachments {
         height: auto;
-        color: #ffb86b;
-        padding: 0 0 0 1;
+        margin-top: 1;
+        color: #c9a86a;
     }
     """
 
@@ -787,6 +824,8 @@ class AgentCyberApp(App[None]):
         self._models_cache: list[ModelInfo] | None = None
         self._hidden_models: set[str] = set()
         self._disabled_providers: set[str] = set()
+        self._onboarding_step: str | None = None
+        self._onboarding_data: dict[str, str] = {}
         self.agents_file = (self.config.data_path or data_dir()) / "agents.json"
         self.preferences_file = (self.config.data_path or data_dir()) / "preferences.json"
         self.cyber_agents = self._load_json_object(self.agents_file)
@@ -835,8 +874,19 @@ class AgentCyberApp(App[None]):
         self.active_skill_id = self.session.skill_id
 
         await self._render_history()
-        if not self.db.get_messages(self.session.id):
-            await self._system("Ready. Type `/help` for commands or describe a task to begin.")
+        first_run = not self.db.get_messages(self.session.id)
+        if first_run:
+            if not self.cyber_agents and not os.getenv("PYTEST_CURRENT_TEST"):
+                await self._begin_agent_onboarding()
+            else:
+                await self._system("Ready. Type `/help` for commands or describe a task to begin.")
+        if self.cyber_agents and self.active_agent.lower() not in self.cyber_agents:
+            candidate = next(
+                (item for item in self.cyber_agents.values() if isinstance(item, dict)),
+                None,
+            )
+            if candidate:
+                self.active_agent = str(candidate.get("name", self.active_agent))
         if not resolve_api_key(self.config) and not _is_local_url(self.config.api.base_url):
             await self._system(
                 "**No API key detected.** Set `OPENAI_API_KEY` (or your provider's "
@@ -852,20 +902,93 @@ class AgentCyberApp(App[None]):
         self._apply_theme(self.theme_name)
         self._update_sidebar()
         self.query_one(Composer).focus()
-        if not self.cyber_agents and not os.getenv("PYTEST_CURRENT_TEST"):
-            self.call_after_refresh(self.push_screen, AgentSetupScreen(), self._finish_agent_setup)
 
-    # ------------------------------------------------------------------ agents and settings
-    def _finish_agent_setup(self, profile: dict[str, str] | None) -> None:
-        if not profile:
+    # ------------------------------------------------------------------ agent onboarding
+    async def _begin_agent_onboarding(self, name: str | None = None) -> None:
+        """Set up an agent conversationally, without opening a modal card."""
+        name = (name or "").strip()[:60]
+        if name:
+            self._onboarding_data = {"name": name}
+            self._onboarding_step = "mission"
+            await self._append(
+                "assistant",
+                f"Let's define **{escape(name)}**. I'll ask three short questions: "
+                "mission, authorized scope, and rules.",
+            )
+            await self._ask_onboarding_question("mission")
             return
-        name = profile["name"].strip()
-        if not name:
+        self._onboarding_data = {}
+        self._onboarding_step = "awaiting_start"
+        await self._append(
+            "assistant",
+            "Hi. I'm **Agent Cyber**.\n\n"
+            "Before we start, type **hi** and I'll ask four quick questions to define "
+            "your agent: name, mission, authorized scope, and rules. "
+            "Type `skip` to keep the safe defaults.",
+        )
+
+    async def _ask_onboarding_question(self, step: str) -> None:
+        title, question = ONBOARDING_QUESTIONS[step]
+        default = DEFAULT_AGENT_PROFILE[step]
+        await self._append(
+            "assistant",
+            f"**{title}**\n\n{question}\n\n"
+            f"_Type `skip` to use the default: {escape(default)}._",
+        )
+
+    async def _handle_onboarding_answer(self, text: str) -> None:
+        text = text.strip()
+        if not text:
             return
-        key = name.lower()
-        self.cyber_agents[key] = profile
+        await self._append("user", text)
+        step = self._onboarding_step
+
+        if step == "awaiting_start":
+            if text.lower() in {"skip", "default"}:
+                self._onboarding_data = dict(DEFAULT_AGENT_PROFILE)
+                await self._finish_agent_onboarding()
+                return
+            self._onboarding_step = "name"
+            await self._ask_onboarding_question("name")
+            return
+
+        if step not in ONBOARDING_QUESTIONS:
+            return
+
+        value = text
+        if text.lower() in {"skip", "default"}:
+            value = DEFAULT_AGENT_PROFILE[step]
+        value = value[:500].strip() or DEFAULT_AGENT_PROFILE[step]
+        self._onboarding_data[step] = value
+
+        order = ("name", "mission", "scope", "rules")
+        index = order.index(step)
+        if index + 1 < len(order):
+            next_step = order[index + 1]
+            self._onboarding_step = next_step
+            await self._ask_onboarding_question(next_step)
+            return
+
+        self._onboarding_step = None
+        await self._finish_agent_onboarding()
+
+    async def _finish_agent_onboarding(self) -> None:
+        profile = dict(DEFAULT_AGENT_PROFILE)
+        profile.update(
+            {key: value for key, value in self._onboarding_data.items() if value}
+        )
+        name = str(profile.get("name") or DEFAULT_AGENT_PROFILE["name"]).strip()[:60]
+        profile["name"] = name
+        self.cyber_agents[name.lower()] = profile
         self._save_json_object(self.agents_file, self.cyber_agents)
-        asyncio.create_task(self._activate_agent(name))
+        self._onboarding_step = None
+        self._onboarding_data = {}
+        await self._activate_agent(name)
+
+    async def _cancel_agent_onboarding(self) -> None:
+        self._onboarding_step = None
+        self._onboarding_data = {}
+        await self._system("Agent setup cancelled. Use `/agent` to start again.")
 
     async def _activate_agent(self, name: str) -> None:
         key = name.strip().lower()
@@ -877,14 +1000,15 @@ class AgentCyberApp(App[None]):
         preferences = self._load_json_object(self.preferences_file)
         preferences["active_agent"] = self.active_agent
         self._save_json_object(self.preferences_file, preferences)
-        mission = str(profile.get("mission") or "cyber security operations")
-        scope = str(profile.get("scope") or "only explicitly authorized systems")
-        rules = str(profile.get("rules") or "follow applicable laws and stop on ambiguity")
+        mission = str(profile.get("mission") or DEFAULT_AGENT_PROFILE["mission"])
+        scope = str(profile.get("scope") or DEFAULT_AGENT_PROFILE["scope"])
+        rules = str(profile.get("rules") or DEFAULT_AGENT_PROFILE["rules"])
         await self._system(
             f"Agent **{escape(self.active_agent)}** is active.\n\n"
-            f"**Mission:** {escape(mission)}\n"
-            f"**Authorized scope:** {escape(scope)}\n"
-            f"**Rules:** {escape(rules)}"
+            f"- **Mission:** {escape(mission)}\n"
+            f"- **Authorized scope:** {escape(scope)}\n"
+            f"- **Rules:** {escape(rules)}\n\n"
+            "Change these later with `/agent name | mission | scope | rules`."
         )
         self._update_sidebar()
 
@@ -907,19 +1031,43 @@ class AgentCyberApp(App[None]):
         self._save_json_object(self.preferences_file, preferences)
         asyncio.create_task(self._system(f"Color mode changed to **{escape(SettingsScreen.THEMES.get(theme, theme))}**."))
 
-    async def _activate_or_create_agent(self, name: str) -> None:
-        if name.lower() in self.cyber_agents:
+    async def _activate_or_create_agent(self, argument: str) -> None:
+        if "|" in argument:
+            parts = [part.strip() for part in argument.split("|")]
+            name = parts[0][:60]
+            if not name:
+                await self._system(
+                    "Usage: `/agent name | mission | scope | rules`"
+                )
+                return
+            existing = self.cyber_agents.get(name.lower())
+            profile = (
+                dict(existing)
+                if isinstance(existing, dict)
+                else dict(DEFAULT_AGENT_PROFILE)
+            )
+            profile["name"] = name
+            for key, value in zip(("mission", "scope", "rules"), parts[1:4]):
+                if value:
+                    profile[key] = value[:500]
+            self.cyber_agents[name.lower()] = profile
+            self._save_json_object(self.agents_file, self.cyber_agents)
             await self._activate_agent(name)
             return
-        self.push_screen(AgentSetupScreen(name), self._finish_agent_setup)
+        if argument.lower() in self.cyber_agents:
+            await self._activate_agent(argument)
+            return
+        await self._begin_agent_onboarding(argument)
 
     async def _list_agents(self) -> None:
         if not self.cyber_agents:
-            self.push_screen(AgentSetupScreen(), self._finish_agent_setup)
+            await self._begin_agent_onboarding()
             return
         names = [str(profile.get("name", key)) for key, profile in self.cyber_agents.items() if isinstance(profile, dict)]
         lines = ["## Cyber agents"] + [f"- **{escape(name)}**" + (" ← active" if name == self.active_agent else "") for name in names]
-        lines.append("\nCreate one with `/agent <name>` or switch with `/agents`.")
+        lines.append(
+            "\nCreate or update one with `/agent name | mission | scope | rules`."
+        )
         await self._system("\n".join(lines))
 
     # ------------------------------------------------------------------ state
@@ -1059,6 +1207,10 @@ class AgentCyberApp(App[None]):
 
         if text.startswith("/"):
             await self._handle_command(text)
+            return
+
+        if self._onboarding_step:
+            await self._handle_onboarding_answer(text)
             return
 
         if self._streaming:

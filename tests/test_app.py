@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from textual.widgets import OptionList
 from agent_cyber.app import (
     COMMANDS,
     AgentCyberApp,
+    ChatMessage,
     Composer,
     ModelPickerScreen,
     ProviderKeyScreen,
@@ -210,6 +212,109 @@ def test_every_modal_card_has_a_working_cancel_button():
             await pilot.click("#model-cancel")
             await pilot.pause()
             assert type(app.screen).__name__ == "Screen"
+
+    asyncio.run(run())
+
+
+def test_onboarding_asks_questions_in_chat_and_saves_agent():
+    answers = [
+        "Hydra",
+        "authorized penetration testing for my lab",
+        "lab network 10.0.0.0/24",
+        "ask before destructive actions",
+    ]
+
+    async def run():
+        app = AgentCyberApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            chat = app.query_one("#chat", VerticalScroll)
+            assert type(app.screen).__name__ == "Screen"
+
+            await app._begin_agent_onboarding()
+            await pilot.pause()
+            assert app._onboarding_step == "awaiting_start"
+            assert type(app.screen).__name__ == "Screen"
+
+            composer = app.query_one(Composer)
+            composer.focus()
+            composer.load_text("hi")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._onboarding_step == "name"
+            assert "Name" in chat.children[-1]._content
+
+            for answer in answers:
+                composer.load_text(answer)
+                await pilot.press("enter")
+                await pilot.pause()
+
+            assert app._onboarding_step is None
+            assert app.active_agent == "Hydra"
+            profile = app.cyber_agents["hydra"]
+            assert profile["mission"] == answers[1]
+            assert profile["scope"] == answers[2]
+            assert profile["rules"] == answers[3]
+            saved = json.loads(app.agents_file.read_text(encoding="utf-8"))
+            assert saved["hydra"]["mission"] == answers[1]
+
+            messages = [
+                child for child in chat.children if isinstance(child, ChatMessage)
+            ]
+            user = next(message for message in messages if message.role == "user")
+            assistant = next(
+                message for message in messages if message.role == "assistant"
+            )
+            user_bubble = user.query_one(".bubble").region
+            assistant_bubble = assistant.query_one(".bubble").region
+            assert user_bubble.x > assistant_bubble.x
+            assert user_bubble.x + user_bubble.width <= chat.region.x + chat.region.width
+
+    asyncio.run(run())
+
+
+def test_agent_command_creates_agent_without_a_modal():
+    async def run():
+        app = AgentCyberApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            composer = app.query_one(Composer)
+            composer.focus()
+            composer.load_text("/agent Hydra | lab pentest | 10.0.0.0/24 | ask first")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert type(app.screen).__name__ == "Screen"
+            assert app.active_agent == "Hydra"
+            profile = app.cyber_agents["hydra"]
+            assert profile["mission"] == "lab pentest"
+            assert profile["scope"] == "10.0.0.0/24"
+            assert profile["rules"] == "ask first"
+
+    asyncio.run(run())
+
+
+def test_chat_messages_render_as_opposite_aligned_bubbles():
+    async def run():
+        app = AgentCyberApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            chat = app.query_one("#chat", VerticalScroll)
+            user = await app._append("user", "hi")
+            assistant = await app._append("assistant", "Hello, how can I help?")
+            await pilot.pause()
+
+            user_bubble = user.query_one(".bubble")
+            assistant_bubble = assistant.query_one(".bubble")
+            assert user_bubble.border_title == "YOU"
+            assert assistant_bubble.border_title == "AGENT CYBER"
+            assert user_bubble.region.x > assistant_bubble.region.x
+            assert user_bubble.region.width < assistant_bubble.region.width
+            assert assistant_bubble.region.x >= chat.region.x
+            assert (
+                user_bubble.region.x + user_bubble.region.width
+                <= chat.region.x + chat.region.width
+            )
 
     asyncio.run(run())
 
